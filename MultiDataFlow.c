@@ -41,9 +41,10 @@ static int Major;            /* Major number assigned to broadcast device driver
 
 // Struct that represents the I/O node with its state
 typedef struct _object_state{
-	struct mutex operation_synchronizer;
-	int valid_bytes;
-	char * stream_content;//the I/O node is a buffer in memory
+   int prio; // 0 : low , 1 : high
+	struct mutex operation_synchronizer[2];
+	int valid_bytes[2];
+	char * stream_content[2];//the I/O node is a buffer in memory
 } object_state;
 
 #define MINORS 128
@@ -89,6 +90,7 @@ static ssize_t dev_write(struct file *filp, const char *buff, size_t len, loff_t
   int minor = get_minor(filp);
   int ret;
   object_state *the_object;
+  int priority;
 
   the_object = objects + minor;
 
@@ -97,23 +99,28 @@ static ssize_t dev_write(struct file *filp, const char *buff, size_t len, loff_t
    return 0;
   }
 
-  mutex_lock(&(the_object->operation_synchronizer)); 
-  printk("%s: somebody called a write on dev with [major,minor] number [%d,%d] starting from offest %lld\n",MODNAME,get_major(filp),get_minor(filp),*off);
+  // Check the priority of the operation
+  priority = the_object->prio;
+
+  //TODO: farle partre in modo diverso a seconda della priorità!
+
+  mutex_lock(&(the_object->operation_synchronizer[priority])); 
+  printk("%s: somebody called a write on dev with [major,minor] number [%d,%d] starting from offest %lld with priority %d\n",MODNAME,get_major(filp),get_minor(filp),*off,priority);
 
   // Check if thw write reaches memory bound and resize the write
-  if(the_object->valid_bytes + len > OBJECT_MAX_SIZE){
-   len = OBJECT_MAX_SIZE - the_object->valid_bytes;
+  if(the_object->valid_bytes[priority] + len > OBJECT_MAX_SIZE){
+   len = OBJECT_MAX_SIZE - the_object->valid_bytes[priority];
   }
 
   // Do not write the string terminator '\0'
-  ret = copy_from_user(&(the_object->stream_content[the_object->valid_bytes]),buff,len);
+  ret = copy_from_user(&(the_object->stream_content[priority][the_object->valid_bytes[priority]]),buff,len);
   
   // Update valid bytes in the buffer
-  the_object->valid_bytes = the_object->valid_bytes + (len - ret);
+  the_object->valid_bytes[priority] = the_object->valid_bytes[priority] + (len - ret);
 
-  printk("%s: valid bytes are %d on dev with [major,minor] number [%d,%d]\n",MODNAME,the_object->valid_bytes,get_major(filp),get_minor(filp));
+  printk("%s: valid bytes are %d on dev with [major,minor] number [%d,%d]\n",MODNAME,the_object->valid_bytes[priority],get_major(filp),get_minor(filp));
 
-  mutex_unlock(&(the_object->operation_synchronizer));
+  mutex_unlock(&(the_object->operation_synchronizer[priority]));
   return len - ret;
 
 }
@@ -124,30 +131,33 @@ static ssize_t dev_read(struct file *filp, char *buff, size_t len, loff_t *off) 
   int ret;
   object_state *the_object;
   char *tmpbuff =  (char*)__get_free_page(GFP_KERNEL);
+  int priority;
 
   the_object = objects + minor;
 
-  mutex_lock(&(the_object->operation_synchronizer)); 
+  // Check the priority of the operation
+  priority = the_object->prio;
+
+  mutex_lock(&(the_object->operation_synchronizer[priority])); 
   printk("%s: somebody called a read of %ld bytes on dev with [major,minor] number [%d,%d]\n",MODNAME,len,get_major(filp),get_minor(filp));
 
   // Resize the reading len if major then the valid bytes in the buffer
-  if(len > the_object->valid_bytes){
-      len = the_object->valid_bytes;
+  if(len > the_object->valid_bytes[priority]){
+      len = the_object->valid_bytes[priority];
   }
 
-  ret = copy_to_user(buff,the_object->stream_content,len);
+  ret = copy_to_user(buff,the_object->stream_content[priority],len);
   // Update the valid bytes count in the stream
-  the_object->valid_bytes = the_object->valid_bytes - len;
+  the_object->valid_bytes[priority] = the_object->valid_bytes[priority] - len - ret;
 
   // Delete the read bytes from the stream
-  memcpy(tmpbuff,the_object->stream_content + len,OBJECT_MAX_SIZE-len);
-  memset(the_object->stream_content,0,OBJECT_MAX_SIZE);
-  memcpy(the_object->stream_content,tmpbuff,OBJECT_MAX_SIZE);
+  memcpy(tmpbuff,the_object->stream_content[priority] + len,OBJECT_MAX_SIZE-len);
+  memset(the_object->stream_content[priority],0,OBJECT_MAX_SIZE);
+  memcpy(the_object->stream_content[priority],tmpbuff,OBJECT_MAX_SIZE);
 
   printk("%s: this is the buffer read -> %s\n",MODNAME,buff);
-  mutex_unlock(&(the_object->operation_synchronizer));
+  mutex_unlock(&(the_object->operation_synchronizer[priority]));
 
-  printk("mutex read unlocked");
 
   return len - ret;
 }
@@ -158,9 +168,21 @@ static long dev_ioctl(struct file *filp, unsigned int command, unsigned long par
   object_state *the_object;
 
   the_object = objects + minor;
-  printk("%s: somebody called an ioctl on dev with [major,minor] number [%d,%d] and command %u, param is %s\n",MODNAME,get_major(filp),get_minor(filp),command,(char*)param);
 
-  //do here whathever you would like to control the state of the device
+  /*
+   List of commands:
+      0 : change priority
+  */
+
+  // Called change priority
+  if(command == 0){
+   int *priority = (int*)param;
+   printk("%s: somebody called an ioctl on dev with [major,minor] number [%d,%d] and command %u, param is %d\n",MODNAME,get_major(filp),get_minor(filp),command,*priority);
+   the_object->prio = *priority;
+  }else{
+   printk("%s : somebody called an ioctl on dev with [major,minor] number [%d,%d] with invalid command %u\n",MODNAME,get_major(filp),get_minor(filp),command);
+  }
+
   return 0;
 
 }
@@ -182,11 +204,16 @@ int init_module(void) {
 
 	//initialize the drive internal state
 	for(i=0;i<MINORS;i++){
-		mutex_init(&(objects[i].operation_synchronizer));
-		objects[i].valid_bytes = 0;
-		objects[i].stream_content = NULL;
-		objects[i].stream_content = (char*)__get_free_page(GFP_KERNEL);
-		if(objects[i].stream_content == NULL) goto revert_allocation;
+		mutex_init(&(objects[i].operation_synchronizer[0]));
+      mutex_init(&(objects[i].operation_synchronizer[1]));
+		objects[i].valid_bytes[0] = 0;
+      objects[i].valid_bytes[1] = 0;
+      objects[i].prio = 0;
+		objects[i].stream_content[0] = NULL;
+      objects[i].stream_content[1] = NULL;
+		objects[i].stream_content[0] = (char*)__get_free_page(GFP_KERNEL);
+      objects[i].stream_content[1] = (char*)__get_free_page(GFP_KERNEL);
+		if(objects[i].stream_content[0] == NULL || objects[i].stream_content[1] == NULL) goto revert_allocation;
 	}
 
 	Major = __register_chrdev(0, 0, 256, DEVICE_NAME, &fops);
@@ -203,7 +230,8 @@ int init_module(void) {
 
 revert_allocation:
 	for(;i>=0;i--){
-		free_page((unsigned long)objects[i].stream_content);
+		free_page((unsigned long)objects[i].stream_content[0]);
+      free_page((unsigned long)objects[i].stream_content[1]);
 	}
 	return -ENOMEM;
 }
@@ -212,7 +240,8 @@ void cleanup_module(void) {
 
 	int i;
 	for(i=0;i<MINORS;i++){
-		free_page((unsigned long)objects[i].stream_content);
+		free_page((unsigned long)objects[i].stream_content[0]);
+      free_page((unsigned long)objects[i].stream_content[1]);
 	}
 
 	unregister_chrdev(Major, DEVICE_NAME);

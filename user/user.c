@@ -12,10 +12,16 @@
 
 #define DATA "provascrittura"
 #define SIZE strlen(DATA)
-#define TO_READ 1000
+#define TO_READ 20
 #define BUFF_SIZE 4096
 
 char buff[BUFF_SIZE];
+
+// Struct that is used for data in ioctl() function
+typedef struct _ioctl_params{
+   	int prio; // 0 : low , 1 : high
+	char* path;
+} ioctl_params;
 
 void *write_and_read(void *data){
 
@@ -79,6 +85,25 @@ void* only_read(void *data){
 	return NULL;
 }
 
+void* change_prio(void *data){
+
+	ioctl_params *params;
+	int fd;
+
+	params = (ioctl_params *)data;
+	printf("Change priority command with prio : %d\n",params->prio);
+
+	
+	fd = open(params->path,O_RDWR);
+     if(fd == -1) {
+		printf("open error on device %s\n",params->path);
+		return NULL;
+	}
+
+	ioctl(fd,0,(unsigned long)&params->prio);
+	return NULL;
+}
+
 
 int main(int argc, char** argv){
 
@@ -126,7 +151,7 @@ int main(int argc, char** argv){
      switch(command){
      	case 0:
      		printf("calling threaddd\n");
-     		for(int i=0;i<100;i++){
+     		for(int i=0;i<1;i++){
      			pthread_create(&tid,NULL,&write_and_read,(void*)device);
      		}
      		break;
@@ -134,13 +159,21 @@ int main(int argc, char** argv){
      		printf("calling read thread\n");
      		pthread_create(&tid,NULL,&only_read,(void*)device);
      		break;
+     	case 2:
+     		printf("calling ioctl thread\n");
+     		ioctl_params params;
+     		params.path = device;
+     		params.prio = 0;
+     		pthread_create(&tid,NULL,&change_prio,(void*)&params);
+     		break;
      	default:
      		printf("Invalid command : %d\n",command);
      		break;
      } 
 
-     while(1);
+     //while(1);
      //pthread_join(tid,NULL);
+     pthread_exit(NULL);
      return 0;
 
 }
