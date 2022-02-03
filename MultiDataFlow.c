@@ -9,7 +9,9 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/fs.h>
-#include <linux/sched.h>	
+#include <linux/sched.h>
+#include <linux/slab.h>
+#include <linux/interrupt.h>
 #include <linux/pid.h>		/* For pid types */
 #include <linux/tty.h>		/* For the tty declarations */
 #include <linux/version.h>	/* For LINUX_VERSION_CODE */
@@ -25,6 +27,8 @@ MODULE_AUTHOR("Alessio Malavasi");
 static int dev_open(struct inode *, struct file *);
 static int dev_release(struct inode *, struct file *);
 static ssize_t dev_write(struct file *, const char *, size_t, loff_t *);
+int put_work(int request_code);
+void audit(unsigned long data);
 
 #define DEVICE_NAME "multi-flow-dev"  /* Device file name in /dev/ - not mandatory  */
 
@@ -46,6 +50,13 @@ typedef struct _object_state{
 	int valid_bytes[2];
 	char * stream_content[2];//the I/O node is a buffer in memory
 } object_state;
+
+// Struct used for delayed work
+typedef struct _packed_task{
+        void* buffer;
+        long code;
+        struct tasklet_struct the_tasklet;
+} packed_task;
 
 #define MINORS 128
 object_state objects[MINORS];
@@ -103,6 +114,8 @@ static ssize_t dev_write(struct file *filp, const char *buff, size_t len, loff_t
   priority = the_object->prio;
 
   //TODO: farle partre in modo diverso a seconda della priorità!
+  put_work(len);
+
 
   mutex_lock(&(the_object->operation_synchronizer[priority])); 
   printk("%s: somebody called a write on dev with [major,minor] number [%d,%d] starting from offest %lld with priority %d\n",MODNAME,get_major(filp),get_minor(filp),*off,priority);
@@ -184,6 +197,56 @@ static long dev_ioctl(struct file *filp, unsigned int command, unsigned long par
   }
 
   return 0;
+
+}
+
+// Function used for delayed work using tasklet
+int put_work(int request_code){
+
+   packed_task *the_task;
+
+   if(!try_module_get(THIS_MODULE)) return -ENODEV;
+
+
+   printk("%s: ------------------------\n",MODNAME);
+   printk("%s: requested deferred work with request code: %d\n",MODNAME,request_code);
+
+   the_task = kzalloc(sizeof(packed_task),GFP_ATOMIC);//non blocking memory allocation
+
+   if (the_task == NULL) {
+      printk("%s: tasklet buffer allocation failure\n",MODNAME);
+      module_put(THIS_MODULE);
+      return -1;
+   }
+
+   the_task->buffer = the_task;
+   the_task->code = request_code;
+
+
+   printk("%s: tasklet buffer allocation success - address is %p\n",MODNAME,the_task);
+
+   tasklet_init(&the_task->the_tasklet,audit,(unsigned long)the_task);
+
+   tasklet_schedule(&the_task->the_tasklet);
+
+   return 0;
+}
+
+//in a real usage this should ever run as interrupt-context
+void audit(unsigned long data){
+
+
+   printk("%s: ------------------------------\n",MODNAME);
+   printk("%s: this print comes from softirq daemon with PID=%d - running on CPU-core %d\n",MODNAME,current->tgid,smp_processor_id());
+        
+   printk("%s: running task with code  %ld\n",MODNAME,((packed_task*)data)->code);
+
+        
+   printk("%s: releasing the task buffer at address %p - container of task is at %p\n",MODNAME,(void*)data,container_of((void*)data,packed_task,buffer));
+
+   kfree((void*)data);
+
+   module_put(THIS_MODULE);
 
 }
 
