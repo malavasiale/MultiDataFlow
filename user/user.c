@@ -12,7 +12,7 @@
 
 #define DATA "provascrittura"
 #define SIZE strlen(DATA)
-#define TO_READ 10
+#define TO_READ 30
 #define BUFF_SIZE 4096
 
 char buff[BUFF_SIZE];
@@ -151,7 +151,7 @@ int main(int argc, char** argv){
      switch(command){
      	case 0:
      		printf("calling threaddd\n");
-     		for(int i=0;i<1;i++){
+     		for(int i=0;i<5;i++){
      			pthread_create(&tid,NULL,&write_and_read,(void*)device);
      		}
      		break;
@@ -163,7 +163,7 @@ int main(int argc, char** argv){
      		printf("calling ioctl thread\n");
      		ioctl_params params;
      		params.path = device;
-     		params.prio = 1;
+     		params.prio = 0;
      		pthread_create(&tid,NULL,&change_prio,(void*)&params);
      		break;
      	default:
