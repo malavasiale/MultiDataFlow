@@ -13,6 +13,7 @@
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/moduleparam.h>
+#include <linux/wait.h>
 #include <linux/pid.h>		/* For pid types */
 #include <linux/tty.h>		/* For the tty declarations */
 #include <linux/version.h>	/* For LINUX_VERSION_CODE */
@@ -26,10 +27,12 @@ MODULE_AUTHOR("Alessio Malavasi");
 // Struct that represents the I/O node with its state
 typedef struct _object_state{
    int minor; // minor of the dev
-   int prio; // 0 : low , 1 : high
+   int prio; // 0 : high , 1 : low
+   int blocking; // 0 : blocking , 1 : non-blocking
    struct mutex operation_synchronizer[2];
    int valid_bytes[2]; // number of valid bytes in the two streams
    char * stream_content[2];//the I/O node is a buffer in memory
+   wait_queue_head_t rd_queue;
 } object_state;
 
 // Struct used for delayed work
@@ -183,12 +186,21 @@ static ssize_t dev_read(struct file *filp, char *buff, size_t len, loff_t *off) 
   // Check the priority of the operation
   priority = the_object->prio;
 
+retry_read:
+
   mutex_lock(&(the_object->operation_synchronizer[priority])); 
   printk("%s: somebody called a read of %ld bytes on dev with [major,minor] number [%d,%d]\n",MODNAME,len,get_major(filp),get_minor(filp));
 
   // Resize the reading len if major then the valid bytes in the buffer
   if(len > the_object->valid_bytes[priority]){
-      len = the_object->valid_bytes[priority];
+      if(the_object->blocking == 0){
+         mutex_unlock(&(the_object->operation_synchronizer[priority]));
+         printk("%s : Insufficient number of bytes to read on dev with [major,minor] number [%d,%d]\n",MODNAME,get_major(filp),get_minor(filp));
+         wait_event_timeout(the_object->rd_queue, the_object->blocking, 2*HZ);
+         goto retry_read;
+      }else if (the_object->blocking == 1){
+         len = the_object->valid_bytes[priority];
+      }   
   }
 
   ret = copy_to_user(buff,the_object->stream_content[priority],len);
@@ -220,11 +232,13 @@ static long dev_ioctl(struct file *filp, unsigned int command, unsigned long par
   object_state *the_object;
 
   the_object = objects + minor;
+  printk("HELLOOO COMMAND IS %d\n",command);
 
   /*
    List of commands:
       0 : change priority
       1 : lock open session for a given minor
+      2 : blocking/non-blocking operations for a given minor
   */
 
   // Called change priority
@@ -236,6 +250,10 @@ static long dev_ioctl(struct file *filp, unsigned int command, unsigned long par
    int *to_lock = (int*)param;
    printk("%s: somebody called an ioctl on dev with [major,minor] number [%d,%d] and command %u, param is %d\n",MODNAME,get_major(filp),*to_lock,command,*to_lock);
    open_permissions[*to_lock] = 1;
+  }else if (command == 3){
+   int *block = (int*)param;
+   printk("%s: somebody called an ioctl on dev with [major,minor] number [%d,%d] and command %u, param is %d\n",MODNAME,get_major(filp),get_minor(filp),command,*block);
+   the_object->blocking = *block;
   }else{
    printk("%s : somebody called an ioctl on dev with [major,minor] number [%d,%d] with invalid command %u\n",MODNAME,get_major(filp),get_minor(filp),command);
   }
@@ -326,16 +344,17 @@ static struct file_operations fops = {
 int init_module(void) {
 
 	int i;
-   int j;
    
 	//initialize the drive internal state
 	for(i=0;i<MINORS;i++){
 		mutex_init(&(objects[i].operation_synchronizer[0]));
       mutex_init(&(objects[i].operation_synchronizer[1]));
+      init_waitqueue_head(&(objects[i].rd_queue));
 		objects[i].valid_bytes[0] = 0;
       objects[i].valid_bytes[1] = 0;
       objects[i].prio = 0;
       objects[i].minor = i;
+      objects[i].blocking = 1;
 		objects[i].stream_content[0] = NULL;
       objects[i].stream_content[1] = NULL;
 		objects[i].stream_content[0] = (char*)__get_free_page(GFP_KERNEL);
@@ -357,13 +376,7 @@ int init_module(void) {
 	}
 
 	printk(KERN_INFO "%s: new device registered, it is assigned major number %d\n",MODNAME, Major);
-
-
-   for(j = 0;j<3;j++){
-      printk("%s : open permission %d : %d",MODNAME,j,open_permissions[j]);
-   }
    
-
 	return 0;
 
 revert_allocation:

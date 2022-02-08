@@ -30,12 +30,19 @@ __used __section(__versions) = {
 	{ 0x6bc3fbc0, "__unregister_chrdev" },
 	{ 0xe6278ff5, "__register_chrdev" },
 	{ 0x4302d0eb, "free_pages" },
+	{ 0xd9a5ea54, "__init_waitqueue_head" },
 	{ 0x977f511b, "__mutex_init" },
 	{ 0xfaef0ed, "__tasklet_schedule" },
 	{ 0x9545af6d, "tasklet_init" },
 	{ 0xf5cb25c8, "kmem_cache_alloc_trace" },
 	{ 0x35216b26, "kmalloc_caches" },
 	{ 0x1937241e, "try_module_get" },
+	{ 0xdecd0b29, "__stack_chk_fail" },
+	{ 0x92540fbf, "finish_wait" },
+	{ 0x8ddd8aad, "schedule_timeout" },
+	{ 0x8c26d495, "prepare_to_wait_event" },
+	{ 0xfe487975, "init_wait_entry" },
+	{ 0xa1c76e0a, "_cond_resched" },
 	{ 0x69acdf38, "memcpy" },
 	{ 0xb44ad4b3, "_copy_to_user" },
 	{ 0x6a5cb5ee, "__get_free_pages" },
@@ -52,4 +59,4 @@ __used __section(__versions) = {
 MODULE_INFO(depends, "");
 
 
-MODULE_INFO(srcversion, "5520835FFF96C4FA2BF4B33");
+MODULE_INFO(srcversion, "123E661CA037EC745BFDEF0");

@@ -12,7 +12,7 @@
 
 #define DATA "provascrittura"
 #define SIZE strlen(DATA)
-#define TO_READ 15
+#define TO_READ 0
 #define BUFF_SIZE 4096
 
 char buff[BUFF_SIZE];
@@ -128,6 +128,23 @@ void* change_open_perm(void *data){
 
 }
 
+void* change_blocking(void* data){
+	ioctl_prio *params;
+	params = (ioctl_prio *)data;
+	int fd;
+
+	printf("Changing blocking param of device to %d\n",params->prio);
+
+	fd = open(params->path,O_RDWR);
+     if(fd == -1) {
+		printf("open error on device %s\n",params->path);
+		return NULL;
+	}
+
+	ioctl(fd,(unsigned long)3,(unsigned long)&params->prio);
+	return NULL;
+}
+
 
 int main(int argc, char** argv){
 
@@ -175,7 +192,7 @@ int main(int argc, char** argv){
      switch(command){
      	case 0:
      		printf("calling threaddd\n");
-     		for(int i=0;i<5;i++){
+     		for(int i=0;i<2;i++){
      			pthread_create(&tid,NULL,&write_and_read,(void*)device);
      		}
      		break;
@@ -199,6 +216,14 @@ int main(int argc, char** argv){
      		params_perm.minor = 1;
      		params_perm.path = device;
      		pthread_create(&tid,NULL,&change_open_perm,(void*)&params_perm);
+     		break;
+     	case 4:
+     		// TODO: FARE LA SCELTA DEI PARAETRI DINAMICO
+     		printf("calling ioctl thread\n");
+     		ioctl_prio params_block;
+     		params_block.prio = 0;
+     		params_block.path = device;
+     		pthread_create(&tid,NULL,&change_blocking,(void*)&params_block);
      		break;
      	default:
      		printf("Invalid command : %d\n",command);
