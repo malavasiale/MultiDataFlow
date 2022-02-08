@@ -25,6 +25,8 @@ MODULE_INFO(retpoline, "Y");
 static const struct modversion_info ____versions[]
 __used __section(__versions) = {
 	{ 0xb3753869, "module_layout" },
+	{ 0x5ab5b891, "param_ops_int" },
+	{ 0xa3bf6975, "param_array_ops" },
 	{ 0x6bc3fbc0, "__unregister_chrdev" },
 	{ 0xe6278ff5, "__register_chrdev" },
 	{ 0x4302d0eb, "free_pages" },
@@ -50,4 +52,4 @@ __used __section(__versions) = {
 MODULE_INFO(depends, "");
 
 
-MODULE_INFO(srcversion, "6CE9F762CC16C4C731755C1");
+MODULE_INFO(srcversion, "5520835FFF96C4FA2BF4B33");

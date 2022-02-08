@@ -12,6 +12,7 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
+#include <linux/moduleparam.h>
 #include <linux/pid.h>		/* For pid types */
 #include <linux/tty.h>		/* For the tty declarations */
 #include <linux/version.h>	/* For LINUX_VERSION_CODE */
@@ -24,9 +25,10 @@ MODULE_AUTHOR("Alessio Malavasi");
 
 // Struct that represents the I/O node with its state
 typedef struct _object_state{
+   int minor; // minor of the dev
    int prio; // 0 : low , 1 : high
    struct mutex operation_synchronizer[2];
-   int valid_bytes[2];
+   int valid_bytes[2]; // number of valid bytes in the two streams
    char * stream_content[2];//the I/O node is a buffer in memory
 } object_state;
 
@@ -62,6 +64,22 @@ static int Major;            /* Major number assigned to broadcast device driver
 #define MINORS 128
 object_state objects[MINORS];
 
+
+/* Permission to open the session with a minor
+   0 : enabled
+   1 : disabled
+*/
+static int open_permissions[MINORS]; 
+module_param_array(open_permissions, int, NULL, 0660);
+
+static int bytes_high[MINORS]; 
+module_param_array(bytes_high, int, NULL, 0660);
+
+static int bytes_low[MINORS]; 
+module_param_array(bytes_low, int, NULL, 0660);
+
+
+
 #define OBJECT_MAX_SIZE  (4096) //just one page
 
 /* the actual driver */
@@ -71,9 +89,16 @@ static int dev_open(struct inode *inode, struct file *file) {
    int minor;
    minor = get_minor(file);
 
+   // Number of minors major then supported
    if(minor >= MINORS){
 	  return -ENODEV;
    }
+
+   // Check if permissions to open the session are enabled
+   if(open_permissions[minor] == 1){
+      return -ENODEV;
+   }
+
 
    printk("%s: device file successfully opened for object with minor %d\n",MODNAME,minor);
 
@@ -86,8 +111,8 @@ static int dev_open(struct inode *inode, struct file *file) {
 
 static int dev_release(struct inode *inode, struct file *file) {
 
-  int minor;
-  minor = get_minor(file);
+   int minor;
+   minor = get_minor(file);
 
    printk("%s: device file closed\n",MODNAME);
    //device closed by default nop
@@ -114,7 +139,7 @@ static ssize_t dev_write(struct file *filp, const char *buff, size_t len, loff_t
   // Check the priority of the operation
   priority = the_object->prio;
 
-  //TODO: Caso coda a low priority
+  
   if(priority == 1){
       printk("%s: somebody called a low priority write on dev with [major,minor] number [%d,%d] starting from offest %d with priority %d\n",MODNAME,get_major(filp),get_minor(filp),the_object->valid_bytes[1],priority);
       put_work(the_object,buff,len);
@@ -132,6 +157,9 @@ static ssize_t dev_write(struct file *filp, const char *buff, size_t len, loff_t
   
       // Update valid bytes in the buffer
       the_object->valid_bytes[priority] = the_object->valid_bytes[priority] + (len - ret);
+
+      // Update parameter array of valid bytes
+      bytes_high[minor] = the_object->valid_bytes[priority];
 
       printk("%s: valid bytes are %d on dev with [major,minor] number [%d,%d]\n",MODNAME,the_object->valid_bytes[priority],get_major(filp),get_minor(filp));
 
@@ -167,6 +195,13 @@ static ssize_t dev_read(struct file *filp, char *buff, size_t len, loff_t *off) 
   // Update the valid bytes count in the stream
   the_object->valid_bytes[priority] = the_object->valid_bytes[priority] - len - ret;
 
+  // Update parameter array of valid bytes
+  if(priority == 0){
+   bytes_high[minor] = the_object->valid_bytes[priority];
+  }else if (priority == 1){
+   bytes_low[minor] = the_object->valid_bytes[priority];
+  }
+
   // Delete the read bytes from the stream
   memcpy(tmpbuff,the_object->stream_content[priority] + len,OBJECT_MAX_SIZE-len);
   memset(the_object->stream_content[priority],0,OBJECT_MAX_SIZE);
@@ -189,6 +224,7 @@ static long dev_ioctl(struct file *filp, unsigned int command, unsigned long par
   /*
    List of commands:
       0 : change priority
+      1 : lock open session for a given minor
   */
 
   // Called change priority
@@ -196,6 +232,10 @@ static long dev_ioctl(struct file *filp, unsigned int command, unsigned long par
    int *priority = (int*)param;
    printk("%s: somebody called an ioctl on dev with [major,minor] number [%d,%d] and command %u, param is %d\n",MODNAME,get_major(filp),get_minor(filp),command,*priority);
    the_object->prio = *priority;
+  }else if (command == 1){ // Called file lock on session open
+   int *to_lock = (int*)param;
+   printk("%s: somebody called an ioctl on dev with [major,minor] number [%d,%d] and command %u, param is %d\n",MODNAME,get_major(filp),*to_lock,command,*to_lock);
+   open_permissions[*to_lock] = 1;
   }else{
    printk("%s : somebody called an ioctl on dev with [major,minor] number [%d,%d] with invalid command %u\n",MODNAME,get_major(filp),get_minor(filp),command);
   }
@@ -244,6 +284,7 @@ void low_prio_write(unsigned long data){
    object_state *the_object = (object_state*)(((packed_task*)data)->buffer);
    size_t len = ((packed_task*)data)->bytes_to_write;
    const char* buff = ((packed_task*)data)->to_write;
+   int minor = the_object->minor;
 
    mutex_lock(&(the_object->operation_synchronizer[1])); 
 
@@ -257,6 +298,9 @@ void low_prio_write(unsigned long data){
   
    // Update valid bytes in the buffer
    the_object->valid_bytes[1] = the_object->valid_bytes[1] + (len - ret);
+
+   // Update parameter array of valid bytes
+   bytes_high[minor] = the_object->valid_bytes[1];
 
    printk("%s: valid bytes are %d on dev low priority\n",MODNAME,the_object->valid_bytes[1]);
 
@@ -282,7 +326,8 @@ static struct file_operations fops = {
 int init_module(void) {
 
 	int i;
-
+   int j;
+   
 	//initialize the drive internal state
 	for(i=0;i<MINORS;i++){
 		mutex_init(&(objects[i].operation_synchronizer[0]));
@@ -290,10 +335,16 @@ int init_module(void) {
 		objects[i].valid_bytes[0] = 0;
       objects[i].valid_bytes[1] = 0;
       objects[i].prio = 0;
+      objects[i].minor = i;
 		objects[i].stream_content[0] = NULL;
       objects[i].stream_content[1] = NULL;
 		objects[i].stream_content[0] = (char*)__get_free_page(GFP_KERNEL);
       objects[i].stream_content[1] = (char*)__get_free_page(GFP_KERNEL);
+
+      // Init of the module parameter arrays
+      open_permissions[i] = 0;
+      bytes_high[i] = 0;
+      bytes_low[i] = 0;
 		if(objects[i].stream_content[0] == NULL || objects[i].stream_content[1] == NULL) goto revert_allocation;
 	}
 
@@ -306,6 +357,12 @@ int init_module(void) {
 	}
 
 	printk(KERN_INFO "%s: new device registered, it is assigned major number %d\n",MODNAME, Major);
+
+
+   for(j = 0;j<3;j++){
+      printk("%s : open permission %d : %d",MODNAME,j,open_permissions[j]);
+   }
+   
 
 	return 0;
 

@@ -12,16 +12,23 @@
 
 #define DATA "provascrittura"
 #define SIZE strlen(DATA)
-#define TO_READ 30
+#define TO_READ 15
 #define BUFF_SIZE 4096
 
 char buff[BUFF_SIZE];
 
-// Struct that is used for data in ioctl() function
-typedef struct _ioctl_params{
+// Struct that is used for data in ioctl() function to change priority
+typedef struct _ioctl_prio{
    	int prio; // 0 : low , 1 : high
 	char* path;
-} ioctl_params;
+} ioctl_prio;
+
+// Struct that is used for data in ioctl() function to disable opening permission of a minor
+typedef struct _ioctl_perm{
+   	int perm; // 0 : open , 1 : closed
+   	int minor;
+   	char *path;
+} ioctl_perm;
 
 void *write_and_read(void *data){
 
@@ -29,7 +36,6 @@ void *write_and_read(void *data){
 	char* path = (char*)data;
 	int ret;
 
-	printf("Hi i m a tread starting\n");
 	fd = open(path,O_RDWR);
      if(fd == -1) {
 		printf("open error on device %s\n",path);
@@ -87,10 +93,10 @@ void* only_read(void *data){
 
 void* change_prio(void *data){
 
-	ioctl_params *params;
+	ioctl_prio *params;
 	int fd;
 
-	params = (ioctl_params *)data;
+	params = (ioctl_prio *)data;
 	printf("Change priority command with prio : %d\n",params->prio);
 
 	
@@ -102,6 +108,24 @@ void* change_prio(void *data){
 
 	ioctl(fd,0,(unsigned long)&params->prio);
 	return NULL;
+}
+
+void* change_open_perm(void *data){
+	ioctl_perm *params;
+	params = (ioctl_perm *)data;
+	int fd;
+
+	printf("Lock open to the minor number %d\n",params->minor);
+
+	fd = open(params->path,O_RDWR);
+     if(fd == -1) {
+		printf("open error on device %s\n",params->path);
+		return NULL;
+	}
+
+	ioctl(fd,1,(unsigned long)&params->minor);
+	return NULL;
+
 }
 
 
@@ -160,11 +184,21 @@ int main(int argc, char** argv){
      		pthread_create(&tid,NULL,&only_read,(void*)device);
      		break;
      	case 2:
+     		// TODO: FARE LA SCELTA DEI PARAETRI DINAMICO
      		printf("calling ioctl thread\n");
-     		ioctl_params params;
-     		params.path = device;
-     		params.prio = 0;
-     		pthread_create(&tid,NULL,&change_prio,(void*)&params);
+     		ioctl_prio params_prio;
+     		params_prio.path = device;
+     		params_prio.prio = 1;
+     		pthread_create(&tid,NULL,&change_prio,(void*)&params_prio);
+     		break;
+     	case 3:
+     		// TODO: FARE LA SCELTA DEI PARAETRI DINAMICO
+     		printf("calling ioctl thread\n");
+     		ioctl_perm params_perm;
+     		params_perm.perm = 1;
+     		params_perm.minor = 1;
+     		params_perm.path = device;
+     		pthread_create(&tid,NULL,&change_open_perm,(void*)&params_perm);
      		break;
      	default:
      		printf("Invalid command : %d\n",command);
