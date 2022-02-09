@@ -29,10 +29,11 @@ typedef struct _object_state{
    int minor; // minor of the dev
    int prio; // 0 : high , 1 : low
    int blocking; // 0 : blocking , 1 : non-blocking
+   int timeout;
+   wait_queue_head_t rd_queue[2];
    struct mutex operation_synchronizer[2];
    int valid_bytes[2]; // number of valid bytes in the two streams
    char * stream_content[2];//the I/O node is a buffer in memory
-   wait_queue_head_t rd_queue;
 } object_state;
 
 // Struct used for delayed work
@@ -164,6 +165,9 @@ static ssize_t dev_write(struct file *filp, const char *buff, size_t len, loff_t
       // Update parameter array of valid bytes
       bytes_high[minor] = the_object->valid_bytes[priority];
 
+      // Wake up process waiting in read queue high prio
+      wake_up_all(&(the_object->rd_queue[priority]));
+
       printk("%s: valid bytes are %d on dev with [major,minor] number [%d,%d]\n",MODNAME,the_object->valid_bytes[priority],get_major(filp),get_minor(filp));
 
       mutex_unlock(&(the_object->operation_synchronizer[priority]));
@@ -189,14 +193,21 @@ static ssize_t dev_read(struct file *filp, char *buff, size_t len, loff_t *off) 
 retry_read:
 
   mutex_lock(&(the_object->operation_synchronizer[priority])); 
-  printk("%s: somebody called a read of %ld bytes on dev with [major,minor] number [%d,%d]\n",MODNAME,len,get_major(filp),get_minor(filp));
+  printk("%s: somebody called a read of %ld bytes on dev with [major,minor] number [%d,%d], blocking param is %d\n",MODNAME,len,get_major(filp),get_minor(filp),the_object->blocking);
 
   // Resize the reading len if major then the valid bytes in the buffer
   if(len > the_object->valid_bytes[priority]){
       if(the_object->blocking == 0){
          mutex_unlock(&(the_object->operation_synchronizer[priority]));
          printk("%s : Insufficient number of bytes to read on dev with [major,minor] number [%d,%d]\n",MODNAME,get_major(filp),get_minor(filp));
-         wait_event_timeout(the_object->rd_queue, the_object->blocking, 2*HZ);
+         
+         // Check timeout value to go in wait queue
+         if(the_object->timeout > 0){
+            wait_event_timeout(the_object->rd_queue[priority], the_object->blocking || len <= the_object->valid_bytes[priority], the_object->timeout*HZ);
+         }else{
+            wait_event(the_object->rd_queue[priority], the_object->blocking || len <= the_object->valid_bytes[priority]);
+         }
+
          goto retry_read;
       }else if (the_object->blocking == 1){
          len = the_object->valid_bytes[priority];
@@ -232,7 +243,6 @@ static long dev_ioctl(struct file *filp, unsigned int command, unsigned long par
   object_state *the_object;
 
   the_object = objects + minor;
-  printk("HELLOOO COMMAND IS %d\n",command);
 
   /*
    List of commands:
@@ -251,9 +261,16 @@ static long dev_ioctl(struct file *filp, unsigned int command, unsigned long par
    printk("%s: somebody called an ioctl on dev with [major,minor] number [%d,%d] and command %u, param is %d\n",MODNAME,get_major(filp),*to_lock,command,*to_lock);
    open_permissions[*to_lock] = 1;
   }else if (command == 3){
+
    int *block = (int*)param;
    printk("%s: somebody called an ioctl on dev with [major,minor] number [%d,%d] and command %u, param is %d\n",MODNAME,get_major(filp),get_minor(filp),command,*block);
    the_object->blocking = *block;
+   
+   // Check if must wake up all the wait queues
+   if(the_object->blocking == 1){
+      wake_up_all(&(the_object->rd_queue[0]));
+      wake_up_all(&(the_object->rd_queue[1]));
+   }
   }else{
    printk("%s : somebody called an ioctl on dev with [major,minor] number [%d,%d] with invalid command %u\n",MODNAME,get_major(filp),get_minor(filp),command);
   }
@@ -311,14 +328,25 @@ void low_prio_write(unsigned long data){
       len = OBJECT_MAX_SIZE - the_object->valid_bytes[1];
    }
 
+retry:
    // Do not write the string terminator '\0'
    ret = copy_from_user(&(the_object->stream_content[1][the_object->valid_bytes[1]]),buff,len);
+   if(ret != 0){
+      printk("%s : Error in delayed low prio write, could only write %ld bytes of %ld",MODNAME,len-ret,len);
+      goto retry;
+   }
+
+   printk("RET IS %d , LEN IS %ld, VALID BYTES BEFORE UPDATE ARE %d",ret,len,the_object->valid_bytes[1]);
   
    // Update valid bytes in the buffer
    the_object->valid_bytes[1] = the_object->valid_bytes[1] + (len - ret);
 
    // Update parameter array of valid bytes
-   bytes_high[minor] = the_object->valid_bytes[1];
+   bytes_low[minor] = the_object->valid_bytes[1];
+
+   
+   // Wake up process waiting in read queue low prio
+   wake_up_all(&(the_object->rd_queue[1]));
 
    printk("%s: valid bytes are %d on dev low priority\n",MODNAME,the_object->valid_bytes[1]);
 
@@ -349,12 +377,14 @@ int init_module(void) {
 	for(i=0;i<MINORS;i++){
 		mutex_init(&(objects[i].operation_synchronizer[0]));
       mutex_init(&(objects[i].operation_synchronizer[1]));
-      init_waitqueue_head(&(objects[i].rd_queue));
+      init_waitqueue_head(&(objects[i].rd_queue[0]));
+      init_waitqueue_head(&(objects[i].rd_queue[1]));
 		objects[i].valid_bytes[0] = 0;
       objects[i].valid_bytes[1] = 0;
       objects[i].prio = 0;
       objects[i].minor = i;
       objects[i].blocking = 1;
+      objects[i].timeout = 0;
 		objects[i].stream_content[0] = NULL;
       objects[i].stream_content[1] = NULL;
 		objects[i].stream_content[0] = (char*)__get_free_page(GFP_KERNEL);

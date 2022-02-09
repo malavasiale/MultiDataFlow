@@ -12,7 +12,7 @@
 
 #define DATA "provascrittura"
 #define SIZE strlen(DATA)
-#define TO_READ 0
+#define TO_READ 10
 #define BUFF_SIZE 4096
 
 char buff[BUFF_SIZE];
@@ -51,16 +51,6 @@ void *write_and_read(void *data){
 	}
 
 	printf("data written %d of %ld\n",ret,strlen(DATA));
-
-	printf("start reading of %d bytes from file with fd %d\n",TO_READ,fd);
-	ret = read(fd,buff,TO_READ);
-	if(ret == -1){
-		printf("error reading the file %d\n",fd);
-		return NULL;
-	}
-
-	printf("success reading %d of %d\n",ret,TO_READ);
-	printf("Buffer read content : %s\n",buff);
 
 	return NULL;
 }
@@ -192,7 +182,7 @@ int main(int argc, char** argv){
      switch(command){
      	case 0:
      		printf("calling threaddd\n");
-     		for(int i=0;i<2;i++){
+     		for(int i=0;i<1;i++){
      			pthread_create(&tid,NULL,&write_and_read,(void*)device);
      		}
      		break;
