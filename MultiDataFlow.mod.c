@@ -37,10 +37,10 @@ __used __section(__versions) = {
 	{ 0xf5cb25c8, "kmem_cache_alloc_trace" },
 	{ 0x35216b26, "kmalloc_caches" },
 	{ 0x1937241e, "try_module_get" },
-	{ 0x1000e51, "schedule" },
 	{ 0x8ddd8aad, "schedule_timeout" },
-	{ 0xdecd0b29, "__stack_chk_fail" },
 	{ 0x92540fbf, "finish_wait" },
+	{ 0xdecd0b29, "__stack_chk_fail" },
+	{ 0x1000e51, "schedule" },
 	{ 0x8c26d495, "prepare_to_wait_event" },
 	{ 0xfe487975, "init_wait_entry" },
 	{ 0xa1c76e0a, "_cond_resched" },
@@ -61,4 +61,4 @@ __used __section(__versions) = {
 MODULE_INFO(depends, "");
 
 
-MODULE_INFO(srcversion, "DB6140FCC86CDA4C4CDDD99");
+MODULE_INFO(srcversion, "425641B5866520BBFF32F7D");

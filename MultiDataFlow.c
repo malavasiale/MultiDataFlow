@@ -31,6 +31,7 @@ typedef struct _object_state{
    int blocking; // 0 : blocking , 1 : non-blocking
    int timeout;
    wait_queue_head_t rd_queue[2];
+   wait_queue_head_t wt_queue[2];
    struct mutex operation_synchronizer[2];
    int valid_bytes[2]; // number of valid bytes in the two streams
    char * stream_content[2];//the I/O node is a buffer in memory
@@ -129,7 +130,7 @@ static int dev_release(struct inode *inode, struct file *file) {
 static ssize_t dev_write(struct file *filp, const char *buff, size_t len, loff_t *off) {
 
   int minor = get_minor(filp);
-  int ret = 0;
+  int ret;
   object_state *the_object;
   int priority;
 
@@ -143,7 +144,8 @@ static ssize_t dev_write(struct file *filp, const char *buff, size_t len, loff_t
   // Check the priority of the operation
   priority = the_object->prio;
 
-  
+retry_write:
+
   if(priority == 1){
       printk("%s: somebody called a low priority write on dev with [major,minor] number [%d,%d] starting from offest %d with priority %d\n",MODNAME,get_major(filp),get_minor(filp),the_object->valid_bytes[1],priority);
       put_work(the_object,buff,len);
@@ -151,9 +153,24 @@ static ssize_t dev_write(struct file *filp, const char *buff, size_t len, loff_t
       mutex_lock(&(the_object->operation_synchronizer[priority])); 
       printk("%s: somebody called a high priority write on dev with [major,minor] number [%d,%d] starting from offest %d with priority %d\n",MODNAME,get_major(filp),get_minor(filp),the_object->valid_bytes[0],priority);
 
-      // Check if thw write reaches memory bound and resize the write
+      // Check if the write reaches memory bound and resize the write or go on wait_queue
       if(the_object->valid_bytes[priority] + len > OBJECT_MAX_SIZE){
-         len = OBJECT_MAX_SIZE - the_object->valid_bytes[priority];
+         if(the_object->blocking == 0){
+            mutex_unlock(&(the_object->operation_synchronizer[priority]));
+            printk("%s : Insufficient space of buffer to write on dev with [major,minor] number [%d,%d]\n",MODNAME,get_major(filp),get_minor(filp));
+            
+            // Check timeout value to go in wait queue
+            if(the_object->timeout > 0){
+               ret = wait_event_timeout(the_object->wt_queue[priority], the_object->blocking || (the_object->valid_bytes[priority] + len) <= OBJECT_MAX_SIZE, the_object->timeout*HZ);
+            }else{
+               wait_event(the_object->wt_queue[priority], the_object->blocking || the_object->valid_bytes[priority] + len <= OBJECT_MAX_SIZE);
+            }
+         goto retry_write;
+         }
+         else if (the_object->blocking == 1){
+            len = OBJECT_MAX_SIZE - the_object->valid_bytes[priority];
+         }
+         
       }
 
       // Do not write the string terminator '\0'
@@ -203,6 +220,7 @@ retry_read:
          
          // Check timeout value to go in wait queue
          if(the_object->timeout > 0){
+            printk("Timeout of the read : %d",the_object->timeout*HZ);
             wait_event_timeout(the_object->rd_queue[priority], the_object->blocking || len <= the_object->valid_bytes[priority], the_object->timeout*HZ);
          }else{
             wait_event(the_object->rd_queue[priority], the_object->blocking || len <= the_object->valid_bytes[priority]);
@@ -328,12 +346,12 @@ void low_prio_write(unsigned long data){
       len = OBJECT_MAX_SIZE - the_object->valid_bytes[1];
    }
 
-retry:
+//retry:
    // Do not write the string terminator '\0'
    ret = copy_from_user(&(the_object->stream_content[1][the_object->valid_bytes[1]]),buff,len);
    if(ret != 0){
       printk("%s : Error in delayed low prio write, could only write %ld bytes of %ld",MODNAME,len-ret,len);
-      goto retry;
+      //goto retry;
    }
 
    printk("RET IS %d , LEN IS %ld, VALID BYTES BEFORE UPDATE ARE %d",ret,len,the_object->valid_bytes[1]);
@@ -372,19 +390,21 @@ static struct file_operations fops = {
 int init_module(void) {
 
 	int i;
-   
+
 	//initialize the drive internal state
 	for(i=0;i<MINORS;i++){
 		mutex_init(&(objects[i].operation_synchronizer[0]));
       mutex_init(&(objects[i].operation_synchronizer[1]));
       init_waitqueue_head(&(objects[i].rd_queue[0]));
       init_waitqueue_head(&(objects[i].rd_queue[1]));
+      init_waitqueue_head(&(objects[i].wt_queue[0]));
+      init_waitqueue_head(&(objects[i].wt_queue[1]));
 		objects[i].valid_bytes[0] = 0;
       objects[i].valid_bytes[1] = 0;
       objects[i].prio = 0;
       objects[i].minor = i;
       objects[i].blocking = 1;
-      objects[i].timeout = 0;
+      objects[i].timeout = 6;
 		objects[i].stream_content[0] = NULL;
       objects[i].stream_content[1] = NULL;
 		objects[i].stream_content[0] = (char*)__get_free_page(GFP_KERNEL);
