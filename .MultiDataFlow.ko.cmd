@@ -1,0 +1,1 @@
+cmd_/home/alessio/Scaricati/Multi-Data-Flow/MultiDataFlow.ko := ld -r -m elf_x86_64  -z max-page-size=0x200000  --build-id  -T ./scripts/module-common.lds -o /home/alessio/Scaricati/Multi-Data-Flow/MultiDataFlow.ko /home/alessio/Scaricati/Multi-Data-Flow/MultiDataFlow.o /home/alessio/Scaricati/Multi-Data-Flow/MultiDataFlow.mod.o;  true

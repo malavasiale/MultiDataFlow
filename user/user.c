@@ -15,27 +15,32 @@
 #define TO_READ 10
 #define BUFF_SIZE 4096
 
+/*
+Command list : 
+	0 : start n thread for write
+	1 : start n thread for read
+	2 : change prioority of the dev
+	3 : change timeout for blocking op of the dev
+	4 : change blocking / non-blocking dev
+*/
+
+// Buffer to recieve the data from kernel
 char buff[BUFF_SIZE];
 
-// Struct that is used for data in ioctl() function to change priority
+// Struct that is used for input data in ioctl() for all the command
 typedef struct _ioctl_input{
    	int value; // 0 : low , 1 : high
 	char* path;
 } ioctl_input;
 
-// Struct that is used for data in ioctl() function to disable opening permission of a minor
-typedef struct _ioctl_perm{
-   	int perm; // 0 : open , 1 : closed
-   	int minor;
-   	char *path;
-} ioctl_perm;
-
-void *write_and_read(void *data){
+// Funcion that execute the write
+void *only_write(void *data){
 
 	int fd;
 	char* path = (char*)data;
 	int ret;
 
+	// open the session
 	fd = open(path,O_RDWR);
      if(fd == -1) {
 		printf("open error on device %s\n",path);
@@ -44,6 +49,7 @@ void *write_and_read(void *data){
 
 	printf("device %s correctly opened with fd %d\n",path,fd);
 
+	// write the data
 	ret = write(fd,DATA,strlen(DATA));
 	if(ret == -1){
 		printf("error writing the file %d\n",fd);
@@ -51,6 +57,8 @@ void *write_and_read(void *data){
 	}
 
 	printf("data written %d of %ld\n",ret,strlen(DATA));
+
+	close(fd);
 
 	return NULL;
 }
@@ -61,13 +69,14 @@ void* only_read(void *data){
 	char* path = (char*)data;
 	int ret;
 
-
+	// open the session
 	fd = open(path,O_RDWR);
      if(fd == -1) {
 		printf("open error on device %s\n",path);
 		return NULL;
 	}
 
+	// read from the file
 	printf("start reading of %d bytes from file with fd %d\n",TO_READ,fd);
 	ret = read(fd,buff,TO_READ);
 	if(ret == -1){
@@ -77,6 +86,8 @@ void* only_read(void *data){
 
 	printf("success reading %d of %d\n",ret,TO_READ);
 	printf("Buffer read content : %s\n",buff);
+
+	close(fd);
 
 	return NULL;
 }
@@ -89,14 +100,17 @@ void* change_prio(void *data){
 	params = (ioctl_input *)data;
 	printf("Change priority command with value : %d\n",params->value);
 
-	
+	// open the session
 	fd = open(params->path,O_RDWR);
      if(fd == -1) {
 		printf("open error on device %s\n",params->path);
 		return NULL;
 	}
 
+	// call the ioctl to change priority
 	ioctl(fd,0,(unsigned long)&params->value);
+
+	close(fd);
 	return NULL;
 }
 
@@ -105,15 +119,20 @@ void* change_timer(void *data){
 	params = (ioctl_input *)data;
 	int fd;
 
-		printf("Change timer command with value : %d\n",params->value);
+	printf("Change timer command with value : %d\n",params->value);
 
+	// open the dev
 	fd = open(params->path,O_RDWR);
      if(fd == -1) {
 		printf("open error on device %s\n",params->path);
 		return NULL;
 	}
 
+	// call the ioctl to change timer
 	ioctl(fd,1,(unsigned long)&params->value);
+
+	close(fd);
+
 	return NULL;
 
 }
@@ -125,13 +144,18 @@ void* change_blocking(void* data){
 
 	printf("Changing blocking param of device to %d\n",params->value);
 
+	// open the session
 	fd = open(params->path,O_RDWR);
      if(fd == -1) {
 		printf("open error on device %s\n",params->path);
 		return NULL;
 	}
 
-	ioctl(fd,(unsigned long)3,(unsigned long)&params->value);
+	// call the ioctl to change blocking param
+	ioctl(fd,3,(unsigned long)&params->value);
+
+	close(fd);
+	
 	return NULL;
 }
 
@@ -183,7 +207,7 @@ int main(int argc, char** argv){
      	case 0:
      		printf("calling threaddd\n");
      		for(int i=0;i<1;i++){
-     			pthread_create(&tid,NULL,&write_and_read,(void*)device);
+     			pthread_create(&tid,NULL,&only_write,(void*)device);
      		}
      		break;
      	case 1:

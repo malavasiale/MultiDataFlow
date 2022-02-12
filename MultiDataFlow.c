@@ -30,10 +30,10 @@ typedef struct _object_state{
    int minor; // minor of the dev
    int prio; // 0 : high , 1 : low
    int blocking; // 0 : blocking , 1 : non-blocking
-   int timeout;
+   int timeout;   // timeout for blocking operations
    wait_queue_head_t rd_queue[2];
-   wait_queue_head_t wt_queue[2];
-   struct mutex operation_synchronizer[2];
+   wait_queue_head_t wt_queue[2]; // wait queues for read and write op
+   struct mutex operation_synchronizer[2]; // mutex for op sync
    int valid_bytes[2]; // number of valid bytes in the two streams
    char * stream_content[2];//the I/O node is a buffer in memory
 } object_state;
