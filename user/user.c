@@ -18,10 +18,10 @@
 char buff[BUFF_SIZE];
 
 // Struct that is used for data in ioctl() function to change priority
-typedef struct _ioctl_prio{
-   	int prio; // 0 : low , 1 : high
+typedef struct _ioctl_input{
+   	int value; // 0 : low , 1 : high
 	char* path;
-} ioctl_prio;
+} ioctl_input;
 
 // Struct that is used for data in ioctl() function to disable opening permission of a minor
 typedef struct _ioctl_perm{
@@ -83,11 +83,11 @@ void* only_read(void *data){
 
 void* change_prio(void *data){
 
-	ioctl_prio *params;
+	ioctl_input *params;
 	int fd;
 
-	params = (ioctl_prio *)data;
-	printf("Change priority command with prio : %d\n",params->prio);
+	params = (ioctl_input *)data;
+	printf("Change priority command with value : %d\n",params->value);
 
 	
 	fd = open(params->path,O_RDWR);
@@ -96,16 +96,16 @@ void* change_prio(void *data){
 		return NULL;
 	}
 
-	ioctl(fd,0,(unsigned long)&params->prio);
+	ioctl(fd,0,(unsigned long)&params->value);
 	return NULL;
 }
 
-void* change_open_perm(void *data){
-	ioctl_perm *params;
-	params = (ioctl_perm *)data;
+void* change_timer(void *data){
+	ioctl_input *params;
+	params = (ioctl_input *)data;
 	int fd;
 
-	printf("Lock open to the minor number %d\n",params->minor);
+		printf("Change timer command with value : %d\n",params->value);
 
 	fd = open(params->path,O_RDWR);
      if(fd == -1) {
@@ -113,17 +113,17 @@ void* change_open_perm(void *data){
 		return NULL;
 	}
 
-	ioctl(fd,1,(unsigned long)&params->minor);
+	ioctl(fd,1,(unsigned long)&params->value);
 	return NULL;
 
 }
 
 void* change_blocking(void* data){
-	ioctl_prio *params;
-	params = (ioctl_prio *)data;
+	ioctl_input *params;
+	params = (ioctl_input *)data;
 	int fd;
 
-	printf("Changing blocking param of device to %d\n",params->prio);
+	printf("Changing blocking param of device to %d\n",params->value);
 
 	fd = open(params->path,O_RDWR);
      if(fd == -1) {
@@ -131,7 +131,7 @@ void* change_blocking(void* data){
 		return NULL;
 	}
 
-	ioctl(fd,(unsigned long)3,(unsigned long)&params->prio);
+	ioctl(fd,(unsigned long)3,(unsigned long)&params->value);
 	return NULL;
 }
 
@@ -193,25 +193,24 @@ int main(int argc, char** argv){
      	case 2:
      		// TODO: FARE LA SCELTA DEI PARAETRI DINAMICO
      		printf("calling ioctl thread\n");
-     		ioctl_prio params_prio;
+     		ioctl_input params_prio;
      		params_prio.path = device;
-     		params_prio.prio = 1;
+     		params_prio.value = 1;
      		pthread_create(&tid,NULL,&change_prio,(void*)&params_prio);
      		break;
      	case 3:
      		// TODO: FARE LA SCELTA DEI PARAETRI DINAMICO
      		printf("calling ioctl thread\n");
-     		ioctl_perm params_perm;
-     		params_perm.perm = 1;
-     		params_perm.minor = 1;
-     		params_perm.path = device;
-     		pthread_create(&tid,NULL,&change_open_perm,(void*)&params_perm);
+     		ioctl_input params_timer;
+     		params_timer.value = 0;
+     		params_timer.path = device;
+     		pthread_create(&tid,NULL,&change_timer,(void*)&params_timer);
      		break;
      	case 4:
      		// TODO: FARE LA SCELTA DEI PARAETRI DINAMICO
      		printf("calling ioctl thread\n");
-     		ioctl_prio params_block;
-     		params_block.prio = 0;
+     		ioctl_input params_block;
+     		params_block.value = 0;
      		params_block.path = device;
      		pthread_create(&tid,NULL,&change_blocking,(void*)&params_block);
      		break;

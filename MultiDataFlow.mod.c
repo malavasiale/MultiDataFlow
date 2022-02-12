@@ -26,6 +26,7 @@ static const struct modversion_info ____versions[]
 __used __section(__versions) = {
 	{ 0xb3753869, "module_layout" },
 	{ 0x5ab5b891, "param_ops_int" },
+	{ 0xe23f4d3, "param_ops_ulong" },
 	{ 0xa3bf6975, "param_array_ops" },
 	{ 0x6bc3fbc0, "__unregister_chrdev" },
 	{ 0xe6278ff5, "__register_chrdev" },
@@ -37,16 +38,16 @@ __used __section(__versions) = {
 	{ 0xf5cb25c8, "kmem_cache_alloc_trace" },
 	{ 0x35216b26, "kmalloc_caches" },
 	{ 0x1937241e, "try_module_get" },
-	{ 0x8ddd8aad, "schedule_timeout" },
-	{ 0x92540fbf, "finish_wait" },
-	{ 0xdecd0b29, "__stack_chk_fail" },
-	{ 0x1000e51, "schedule" },
-	{ 0x8c26d495, "prepare_to_wait_event" },
-	{ 0xfe487975, "init_wait_entry" },
-	{ 0xa1c76e0a, "_cond_resched" },
 	{ 0x69acdf38, "memcpy" },
 	{ 0xb44ad4b3, "_copy_to_user" },
 	{ 0x6a5cb5ee, "__get_free_pages" },
+	{ 0x1000e51, "schedule" },
+	{ 0x8ddd8aad, "schedule_timeout" },
+	{ 0xdecd0b29, "__stack_chk_fail" },
+	{ 0x92540fbf, "finish_wait" },
+	{ 0x8c26d495, "prepare_to_wait_event" },
+	{ 0xfe487975, "init_wait_entry" },
+	{ 0xa1c76e0a, "_cond_resched" },
 	{ 0x3ba859c1, "module_put" },
 	{ 0x37a0cba, "kfree" },
 	{ 0x409bcb62, "mutex_unlock" },
@@ -61,4 +62,4 @@ __used __section(__versions) = {
 MODULE_INFO(depends, "");
 
 
-MODULE_INFO(srcversion, "425641B5866520BBFF32F7D");
+MODULE_INFO(srcversion, "1CEF0EFFFE0375DC002DC8B");

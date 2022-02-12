@@ -17,6 +17,7 @@
 #include <linux/pid.h>		/* For pid types */
 #include <linux/tty.h>		/* For the tty declarations */
 #include <linux/version.h>	/* For LINUX_VERSION_CODE */
+//#include <asm/atomic.h>
 
 
 MODULE_LICENSE("GPL");
@@ -78,10 +79,16 @@ static int open_permissions[MINORS];
 module_param_array(open_permissions, int, NULL, 0660);
 
 static int bytes_high[MINORS]; 
-module_param_array(bytes_high, int, NULL, 0660);
+module_param_array(bytes_high, int, NULL, 0440);
 
 static int bytes_low[MINORS]; 
-module_param_array(bytes_low, int, NULL, 0660);
+module_param_array(bytes_low, int, NULL, 0440);
+
+static unsigned long high_wait_queue_counter[MINORS]; 
+module_param_array(high_wait_queue_counter, ulong, NULL, 0440);
+
+static unsigned long low_wait_queue_counter[MINORS]; 
+module_param_array(low_wait_queue_counter, ulong, NULL, 0440);
 
 
 
@@ -144,7 +151,7 @@ static ssize_t dev_write(struct file *filp, const char *buff, size_t len, loff_t
   // Check the priority of the operation
   priority = the_object->prio;
 
-retry_write:
+retry_write_high:
 
   if(priority == 1){
       printk("%s: somebody called a low priority write on dev with [major,minor] number [%d,%d] starting from offest %d with priority %d\n",MODNAME,get_major(filp),get_minor(filp),the_object->valid_bytes[1],priority);
@@ -165,7 +172,7 @@ retry_write:
             }else{
                wait_event(the_object->wt_queue[priority], the_object->blocking || the_object->valid_bytes[priority] + len <= OBJECT_MAX_SIZE);
             }
-         goto retry_write;
+         goto retry_write_high;
          }
          else if (the_object->blocking == 1){
             len = OBJECT_MAX_SIZE - the_object->valid_bytes[priority];
@@ -248,6 +255,9 @@ retry_read:
   memset(the_object->stream_content[priority],0,OBJECT_MAX_SIZE);
   memcpy(the_object->stream_content[priority],tmpbuff,OBJECT_MAX_SIZE);
 
+   // Wake up process waiting in read queue high prio
+   wake_up_all(&(the_object->wt_queue[priority]));
+
   printk("%s: this is the buffer read -> %s\n",MODNAME,buff);
   mutex_unlock(&(the_object->operation_synchronizer[priority]));
 
@@ -264,8 +274,8 @@ static long dev_ioctl(struct file *filp, unsigned int command, unsigned long par
 
   /*
    List of commands:
-      0 : change priority
-      1 : lock open session for a given minor
+      0 : change priority for a given minor
+      1 : change timeout for a given minor
       2 : blocking/non-blocking operations for a given minor
   */
 
@@ -274,10 +284,10 @@ static long dev_ioctl(struct file *filp, unsigned int command, unsigned long par
    int *priority = (int*)param;
    printk("%s: somebody called an ioctl on dev with [major,minor] number [%d,%d] and command %u, param is %d\n",MODNAME,get_major(filp),get_minor(filp),command,*priority);
    the_object->prio = *priority;
-  }else if (command == 1){ // Called file lock on session open
-   int *to_lock = (int*)param;
-   printk("%s: somebody called an ioctl on dev with [major,minor] number [%d,%d] and command %u, param is %d\n",MODNAME,get_major(filp),*to_lock,command,*to_lock);
-   open_permissions[*to_lock] = 1;
+  }else if (command == 1){
+   int *timer = (int*)param;
+   printk("%s: somebody called an ioctl on dev with [major,minor] number [%d,%d] and command %u, param is %d\n",MODNAME,get_major(filp),get_minor(filp),command,*timer);
+   the_object->timeout = *timer;
   }else if (command == 3){
 
    int *block = (int*)param;
@@ -288,6 +298,8 @@ static long dev_ioctl(struct file *filp, unsigned int command, unsigned long par
    if(the_object->blocking == 1){
       wake_up_all(&(the_object->rd_queue[0]));
       wake_up_all(&(the_object->rd_queue[1]));
+      wake_up_all(&(the_object->wt_queue[0]));
+      wake_up_all(&(the_object->wt_queue[1]));
    }
   }else{
    printk("%s : somebody called an ioctl on dev with [major,minor] number [%d,%d] with invalid command %u\n",MODNAME,get_major(filp),get_minor(filp),command);
@@ -339,11 +351,28 @@ void low_prio_write(unsigned long data){
    const char* buff = ((packed_task*)data)->to_write;
    int minor = the_object->minor;
 
+retry_write_low:
+   
    mutex_lock(&(the_object->operation_synchronizer[1])); 
 
    // Check if thw write reaches memory bound and resize the write
    if(the_object->valid_bytes[1] + len > OBJECT_MAX_SIZE){
-      len = OBJECT_MAX_SIZE - the_object->valid_bytes[1];
+      if(the_object->blocking == 0){
+         mutex_unlock(&(the_object->operation_synchronizer[1]));
+         printk("%s : Insufficient space of buffer to write low priority on dev with minor number %d\n",MODNAME,minor);
+            
+         // Check timeout value to go in wait queue
+         if(the_object->timeout > 0){
+            ret = wait_event_timeout(the_object->wt_queue[1], the_object->blocking || (the_object->valid_bytes[1] + len) <= OBJECT_MAX_SIZE, the_object->timeout*HZ);
+         }else{
+            wait_event(the_object->wt_queue[1], the_object->blocking || the_object->valid_bytes[1] + len <= OBJECT_MAX_SIZE);
+         }
+
+      goto retry_write_low;
+      }
+      else if (the_object->blocking == 1){
+         len = OBJECT_MAX_SIZE - the_object->valid_bytes[1];
+      }
    }
 
 //retry:
@@ -404,7 +433,7 @@ int init_module(void) {
       objects[i].prio = 0;
       objects[i].minor = i;
       objects[i].blocking = 1;
-      objects[i].timeout = 6;
+      objects[i].timeout = 0;
 		objects[i].stream_content[0] = NULL;
       objects[i].stream_content[1] = NULL;
 		objects[i].stream_content[0] = (char*)__get_free_page(GFP_KERNEL);
@@ -414,6 +443,8 @@ int init_module(void) {
       open_permissions[i] = 0;
       bytes_high[i] = 0;
       bytes_low[i] = 0;
+      atomic_set((atomic_t*)&high_wait_queue_counter[i], 0);
+      atomic_set((atomic_t*)&low_wait_queue_counter[i], 0);
 		if(objects[i].stream_content[0] == NULL || objects[i].stream_content[1] == NULL) goto revert_allocation;
 	}
 
