@@ -10,9 +10,6 @@
 #include <linux/kdev_t.h>
 
 
-#define DATA "provascrittura"
-#define SIZE strlen(DATA)
-#define TO_READ 10
 #define BUFF_SIZE 4096
 
 /*
@@ -24,8 +21,8 @@ Command list :
 	4 : change blocking / non-blocking dev
 */
 
-// Buffer to recieve the data from kernel
-char buff[BUFF_SIZE];
+// Buffer for device name
+char device[128];
 
 // Struct that is used for input data in ioctl() for all the command
 typedef struct _ioctl_input{
@@ -37,26 +34,26 @@ typedef struct _ioctl_input{
 void *only_write(void *data){
 
 	int fd;
-	char* path = (char*)data;
+	char* to_write = (char*)data;
 	int ret;
 
 	// open the session
-	fd = open(path,O_RDWR);
+	fd = open(device,O_RDWR);
      if(fd == -1) {
-		printf("open error on device %s\n",path);
+		printf("open error on device %s\n",device);
 		return NULL;
 	}
 
-	printf("device %s correctly opened with fd %d\n",path,fd);
+	printf("device %s correctly opened with fd %d\n",device,fd);
 
-	// write the data
-	ret = write(fd,DATA,strlen(DATA));
+	// write the data - delete last char \n
+	ret = write(fd,to_write,strlen(to_write)-1);
 	if(ret == -1){
 		printf("error writing the file %d\n",fd);
 		return NULL;
 	}
 
-	printf("data written %d of %ld\n",ret,strlen(DATA));
+	printf("data written %d of %ld\n",ret,strlen(to_write)-1);
 
 	close(fd);
 
@@ -66,26 +63,30 @@ void *only_write(void *data){
 void* only_read(void *data){
 
 	int fd;
-	char* path = (char*)data;
 	int ret;
+	int *len = (int*)data;
+
+	// Buffer to recieve the data from kernel
+	char buff[BUFF_SIZE];
 
 	// open the session
-	fd = open(path,O_RDWR);
+	fd = open(device,O_RDWR);
      if(fd == -1) {
-		printf("open error on device %s\n",path);
+		printf("open error on device %s\n",device);
 		return NULL;
 	}
 
 	// read from the file
-	printf("start reading of %d bytes from file with fd %d\n",TO_READ,fd);
-	ret = read(fd,buff,TO_READ);
+	printf("start reading of %d bytes from file with fd %d\n",*len,fd);
+	ret = read(fd,buff,*len);
 	if(ret == -1){
 		printf("error reading the file %d\n",fd);
 		return NULL;
 	}
 
-	printf("success reading %d of %d\n",ret,TO_READ);
+	printf("success reading %d of %d\n",ret,*len);
 	printf("Buffer read content : %s\n",buff);
+	memset(buff,0,*len);
 
 	close(fd);
 
@@ -94,42 +95,40 @@ void* only_read(void *data){
 
 void* change_prio(void *data){
 
-	ioctl_input *params;
 	int fd;
 
-	params = (ioctl_input *)data;
-	printf("Change priority command with value : %d\n",params->value);
+	int *prio = (int*)data;
+	printf("Change priority command with value : %d\n",*prio);
 
 	// open the session
-	fd = open(params->path,O_RDWR);
+	fd = open(device,O_RDWR);
      if(fd == -1) {
-		printf("open error on device %s\n",params->path);
+		printf("open error on device %s\n",device);
 		return NULL;
 	}
 
 	// call the ioctl to change priority
-	ioctl(fd,0,(unsigned long)&params->value);
+	ioctl(fd,0,(unsigned long)prio);
 
 	close(fd);
 	return NULL;
 }
 
 void* change_timer(void *data){
-	ioctl_input *params;
-	params = (ioctl_input *)data;
+	int *timer = (int*)data;
 	int fd;
 
-	printf("Change timer command with value : %d\n",params->value);
+	printf("Change timer command with value : %d\n",*timer);
 
 	// open the dev
-	fd = open(params->path,O_RDWR);
+	fd = open(device,O_RDWR);
      if(fd == -1) {
-		printf("open error on device %s\n",params->path);
+		printf("open error on device %s\n",device);
 		return NULL;
 	}
 
 	// call the ioctl to change timer
-	ioctl(fd,1,(unsigned long)&params->value);
+	ioctl(fd,1,(unsigned long)timer);
 
 	close(fd);
 
@@ -138,21 +137,21 @@ void* change_timer(void *data){
 }
 
 void* change_blocking(void* data){
-	ioctl_input *params;
-	params = (ioctl_input *)data;
+
+	int *block = (int*)data;
 	int fd;
 
-	printf("Changing blocking param of device to %d\n",params->value);
+	printf("Changing blocking param of device to %d\n",*block);
 
 	// open the session
-	fd = open(params->path,O_RDWR);
+	fd = open(device,O_RDWR);
      if(fd == -1) {
-		printf("open error on device %s\n",params->path);
+		printf("open error on device %s\n",device);
 		return NULL;
 	}
 
 	// call the ioctl to change blocking param
-	ioctl(fd,3,(unsigned long)&params->value);
+	ioctl(fd,3,(unsigned long)block);
 
 	close(fd);
 	
@@ -168,7 +167,6 @@ int main(int argc, char** argv){
      int fd;
      int command;
      char* path;
-     char device[128];
      int dev_num;
      pthread_t tid;
 
@@ -177,22 +175,26 @@ int main(int argc, char** argv){
 		return -1;
      }
 
+     // Take command line parameters passed from the user
      path = argv[1];
      major = strtol(argv[2],NULL,10);
      minor = strtol(argv[3],NULL,10);
      command = strtol(argv[4],NULL,10);
      printf("creating %d minor for device %s with major %d\n",minor,path,major);
 
+     // The device name will be {pathname}{minor}
      strcat(strcpy(device,path),argv[3]);
 
+     // Create dev number with major and minor
      printf("device complete name : %s\n",device);
      dev_num = MKDEV(major,minor);
      
+     // Create the new node
      ret = mknod(device,S_IFCHR | 0666 ,dev_num);
      if(ret == -1){
-     	if(errno == EEXIST){
+     	if(errno == EEXIST){ // Check if alredy exists
      		printf("device %s alredy exists\n",device);
-     	}else{
+     	}else{ // Check for errors
      		printf("Cannot create node %s\n",device);
      		return -1;
      	}
@@ -203,40 +205,110 @@ int main(int argc, char** argv){
      	return -1;
      }
 
+
      switch(command){
      	case 0:
-     		printf("calling threaddd\n");
-     		for(int i=0;i<1;i++){
-     			pthread_create(&tid,NULL,&only_write,(void*)device);
+     		printf("--- Starting write threads ---\n");
+     		int n_wthreads;
+     		char to_write[128];
+
+     		// How many thread to spawn
+     		printf("Insert how many thread spawn : ");
+     		ret = scanf("%d",&n_wthreads);
+     		if(ret == 0){
+     			printf("Invalid number\n");
+     			exit(-1);
+     		}
+     		getchar();
+
+     		// String to write
+     		printf("Insert string to write : ");
+     		if(fgets(to_write,128,stdin) == NULL){
+     			printf("Error reading the string\n");
+     			exit(-1);
+     		}
+
+     		printf("%s",to_write);
+     		
+     		// Spawn n_threads that write to_write buff
+     		for(int i=0;i<n_wthreads;i++){
+     			pthread_create(&tid,NULL,&only_write,(void*)to_write);
      		}
      		break;
      	case 1:
-     		printf("calling read thread\n");
-     		pthread_create(&tid,NULL,&only_read,(void*)device);
+     		printf("--- Starting read threads ---\n");
+     		int to_read;
+     		int n_rthreads;
+
+     		// How many threads to spawn
+     		printf("Insert how many thread spawn : ");
+     		ret = scanf("%d",&n_rthreads);
+     		if(ret == 0){
+     			printf("Invalid number\n");
+     			exit(-1);
+     		}
+     		getchar();
+
+     		// How many bytes t read
+     		printf("Insert how many bytes to read : ");
+     		ret = scanf("%d",&to_read);
+     		if(ret == 0){
+     			printf("Invalid number\n");
+     			exit(-1);
+     		}
+     		getchar();
+
+     		// Spawn n_threads that write to_write buff
+     		for(int i=0;i<n_rthreads;i++){
+     			pthread_create(&tid,NULL,&only_read,&to_read);
+     		}
      		break;
      	case 2:
-     		// TODO: FARE LA SCELTA DEI PARAETRI DINAMICO
-     		printf("calling ioctl thread\n");
-     		ioctl_input params_prio;
-     		params_prio.path = device;
-     		params_prio.value = 1;
-     		pthread_create(&tid,NULL,&change_prio,(void*)&params_prio);
+     		printf("--- Starting ioctl change priority ---\n");
+     		int prio;
+
+     		// Chose priority value
+     		printf("Insert priority to set\n");
+     		printf("0 : high\n1 : low\n");
+     		ret = scanf("%d",&prio);
+     		if(ret == 0 || (prio != 0 && prio != 1)){
+     			printf("Invalid number\n");
+     			exit(-1);
+     		}
+     		getchar();
+
+     		pthread_create(&tid,NULL,&change_prio,&prio);
      		break;
      	case 3:
-     		// TODO: FARE LA SCELTA DEI PARAETRI DINAMICO
-     		printf("calling ioctl thread\n");
-     		ioctl_input params_timer;
-     		params_timer.value = 0;
-     		params_timer.path = device;
-     		pthread_create(&tid,NULL,&change_timer,(void*)&params_timer);
+     		printf("--- Starting ioctl change timer ---\n");
+     		int timer;
+
+     		// Chose timer value
+     		printf("Insert timer value to set (in seconds)\n0 : no timer\n");
+     		ret = scanf("%d",&timer);
+     		if(ret == 0 || timer < 0){
+     			printf("Invalid number\n");
+     			exit(-1);
+     		}
+     		getchar();
+
+     		pthread_create(&tid,NULL,&change_timer,&timer);
      		break;
      	case 4:
-     		// TODO: FARE LA SCELTA DEI PARAETRI DINAMICO
-     		printf("calling ioctl thread\n");
-     		ioctl_input params_block;
-     		params_block.value = 0;
-     		params_block.path = device;
-     		pthread_create(&tid,NULL,&change_blocking,(void*)&params_block);
+     		printf("--- Starting ioctl change blocking ---\n");
+     		int block;
+
+     		// Chose block value
+     		printf("Insert value to set blocking operatins\n");
+     		printf("0 : blocking\n1 : non-blocking\n");
+     		ret = scanf("%d",&block);
+     		if(ret == 0 || (prio != 0 && prio != 1)){
+     			printf("Invalid number\n");
+     			exit(-1);
+     		}
+     		getchar();
+     		
+     		pthread_create(&tid,NULL,&change_blocking,&block);
      		break;
      	default:
      		printf("Invalid command : %d\n",command);
