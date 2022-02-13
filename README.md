@@ -1,7 +1,13 @@
 # Multi-Data-Flow
 
+### Info
+Source code for SOA project that implements a linux driver for Multi-flow device file.
+
+***Author***: Alessio Malavasi (0287437)
+
 ### Installation
 In the main directory run the  command  `make all`  to compile the module and create de .ko object.
+
 Then run the command  `sudo make mount` to install the module.
 
 ### User code execution
