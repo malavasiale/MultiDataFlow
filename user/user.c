@@ -16,7 +16,7 @@
 Command list : 
 	0 : start n thread for write
 	1 : start n thread for read
-	2 : change prioority of the dev
+	2 : change priority of the dev
 	3 : change timeout for blocking op of the dev
 	4 : change blocking / non-blocking dev
 */
