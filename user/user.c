@@ -19,16 +19,11 @@ Command list :
 	2 : change priority of the dev
 	3 : change timeout for blocking op of the dev
 	4 : change blocking / non-blocking dev
+	5 : launch the test routine on the device
 */
 
 // Buffer for device name
 char device[128];
-
-// Struct that is used for input data in ioctl() for all the command
-typedef struct _ioctl_input{
-   	int value; // 0 : low , 1 : high
-	char* path;
-} ioctl_input;
 
 // Funcion that execute the write
 void *only_write(void *data){
@@ -53,7 +48,7 @@ void *only_write(void *data){
 		return NULL;
 	}
 
-	printf("data written %d of %ld\n",ret,strlen(to_write)-1);
+	printf("data written %d of %ld\n\n\n",ret,strlen(to_write)-1);
 
 	close(fd);
 
@@ -85,7 +80,7 @@ void* only_read(void *data){
 	}
 
 	printf("success reading %d of %d\n",ret,*len);
-	printf("Buffer read content : %s\n",buff);
+	printf("Buffer read content : %s\n\n\n",buff);
 	memset(buff,0,*len);
 
 	close(fd);
@@ -98,7 +93,7 @@ void* change_prio(void *data){
 	int fd;
 
 	int *prio = (int*)data;
-	printf("Change priority command with value : %d\n",*prio);
+	printf("Change priority command with value : %d\n\n\n",*prio);
 
 	// open the session
 	fd = open(device,O_RDWR);
@@ -118,7 +113,7 @@ void* change_timer(void *data){
 	int *timer = (int*)data;
 	int fd;
 
-	printf("Change timer command with value : %d\n",*timer);
+	printf("Change timer command with value : %d\n\n\n",*timer);
 
 	// open the dev
 	fd = open(device,O_RDWR);
@@ -141,7 +136,7 @@ void* change_blocking(void* data){
 	int *block = (int*)data;
 	int fd;
 
-	printf("Changing blocking param of device to %d\n",*block);
+	printf("Changing blocking param of device to %d\n\n\n",*block);
 
 	// open the session
 	fd = open(device,O_RDWR);
@@ -310,13 +305,75 @@ int main(int argc, char** argv){
      		
      		pthread_create(&tid,NULL,&change_blocking,&block);
      		break;
+     	case 5:
+     		printf("\n--- Init test routine ---\n");
+     		char *test_write = "testwrite\n";
+     		int test_read = strlen(test_write)-1;
+     		int test_block = 0;
+     		int test_prio = 1;
+     		int test_timeout = 8;
+
+     		// Spawn a non blocking read thread
+     		pthread_create(&tid,NULL,&only_read,&test_read);
+
+     		sleep(2);
+
+     		// Spawn 2 write threads
+     		for(int i=0;i<2;i++){
+     			pthread_create(&tid,NULL,&only_write,(void*)test_write);
+     		}
+
+     		sleep(2);
+
+     		// set the device in blocking mode
+     		pthread_create(&tid,NULL,&change_blocking,&test_block);
+
+     		sleep(2);
+
+     		// Spawn 3 blocking read threads.
+     		// 2 success - 1 blocked
+     		for(int i=0;i<3;i++){
+     			pthread_create(&tid,NULL,&only_read,&test_read);
+     		}
+
+     		// Wait 8 seconds
+     		sleep(8);
+
+     		// Launch one write thread. The blocked read one will wake up and read the data.
+     		pthread_create(&tid,NULL,&only_write,(void*)test_write);
+
+     		sleep(2);
+
+     		// reset the device in non-blocking mode
+     		test_block = 1;
+     		pthread_create(&tid,NULL,&change_blocking,&test_block);
+
+     		sleep(2);
+
+     		// Set priority to low
+     		pthread_create(&tid,NULL,&change_prio,&test_prio);
+
+     		sleep(2);
+
+     		// Launch one write on low priority
+     		pthread_create(&tid,NULL,&only_write,(void*)test_write);
+
+     		sleep(2);
+
+     		// Spawn two read threads non-blocking on low priority
+     		// Could run before or after the write thread!!
+     		for(int i=0;i<2;i++){
+     			pthread_create(&tid,NULL,&only_read,&test_read);
+     		}
+
+     		sleep(2);
+     		printf("\n--- Test routine completed ---\n");
+     		break;
      	default:
      		printf("Invalid command : %d\n",command);
      		break;
      } 
 
-     //while(1);
-     //pthread_join(tid,NULL);
      pthread_exit(NULL);
      return 0;
 
